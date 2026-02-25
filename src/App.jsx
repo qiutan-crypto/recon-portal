@@ -4,6 +4,7 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import * as XLSX from 'xlsx';
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
+import { TEMPLATE_QUESTIONS } from './TemplateQuestions';
 import {
   Loader2,
   Upload,
@@ -188,6 +189,8 @@ function App() {
   const [view, setView] = useState('dashboard');
   const [currentSurveyId, setCurrentSurveyId] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [selectedTemplateQuestions, setSelectedTemplateQuestions] = useState(new Set());
+  const [expandedSections, setExpandedSections] = useState({});
 
   const fetchUserRole = async (userId) => {
     try {
@@ -529,7 +532,7 @@ function AdminDashboard({ session, view, setView, currentSurveyId, setCurrentSur
 
     const name = customer?.first_name || 'Client';
     const email = customer?.email || '';
-    const surveyUrl = `https://recon-portal-pied.vercel.app/?survey_id=${survey.id}`;
+    const surveyUrl = `${window.location.origin}/?survey_id=${survey.id}`;
     const subject = `Action Required: Transaction Classification Questions`;
     const senderName = userDisplayName || 'Five Star Tax Team';
 
@@ -760,6 +763,25 @@ ${senderName}`;
     } finally {
       setIsProcessing(false);
     }
+  };
+
+  const handleTemplateProcess = () => {
+    const selected = Array.from(selectedTemplateQuestions);
+    if (selected.length === 0) { alert("Please select at least one question from the template."); return; }
+
+    let fields = [];
+    TEMPLATE_QUESTIONS.forEach(section => {
+      section.questions.forEach(q => {
+        if (selected.includes(q.label)) {
+          // Strip original numbering (e.g., "1. Legal Name" -> "Legal Name")
+          const cleanLabel = q.label.replace(/^\d+\.\s*/, '');
+          fields.push({ ...q, label: cleanLabel, section: section.title });
+        }
+      });
+    });
+
+    setExtractedData({ fields });
+    setView('preview-data');
   };
 
 
@@ -1008,7 +1030,7 @@ ${senderName}`;
                   onClick={() => setSurveyType('general')}
                   className={`p-4 rounded-xl border-2 text-left transition-all ${surveyType === 'general' ? 'border-purple-600 bg-purple-50' : 'border-slate-200 hover:border-purple-300'}`}
                 >
-                  <div className="font-bold text-slate-900">General Survey</div>
+                  <div className="font-bold text-slate-900">Business Profile</div>
                   <div className="text-sm text-slate-500">Forms, questionnaires, data collection</div>
                 </button>
               </div>
@@ -1018,10 +1040,21 @@ ${senderName}`;
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-2">3. Choose Data Source</label>
               <div className="flex space-x-2 mb-4">
-                {['upload', 'paste'].map(t => (
+                {['upload', 'paste', ...(surveyType === 'general' ? ['template'] : [])].map(t => (
                   <button
                     key={t}
-                    onClick={() => setInputType(t)}
+                    onClick={() => {
+                      console.log('Switching input type to:', t);
+                      console.log('Current Survey Type:', surveyType);
+                      console.log('Template Questions Length:', TEMPLATE_QUESTIONS.length);
+                      setInputType(t);
+                      setExtractedData(null);
+                      setPasteContent('');
+                      if (t === 'template') {
+                        setSelectedTemplateQuestions(new Set());
+                        console.log('Reset template questions');
+                      }
+                    }}
                     className={`px-4 py-2 rounded-lg text-sm font-medium capitalize transition-colors ${inputType === t ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
                   >
                     {t}
@@ -1068,6 +1101,69 @@ ${senderName}`;
                   >
                     Process Text
                   </button>
+                </div>
+              )}
+
+              {inputType === 'template' && (
+                <div className="border border-slate-200 rounded-xl overflow-hidden bg-white min-h-[300px]">
+                  <div className="p-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
+                    <h3 className="font-semibold text-slate-700">Select Questions from Template ({TEMPLATE_QUESTIONS.length} sections)</h3>
+                    <button onClick={() => setSelectedTemplateQuestions(new Set())} className="text-xs text-red-600 hover:underline">Clear All</button>
+                  </div>
+                  <div className="max-h-96 overflow-y-auto p-4 space-y-4">
+                    {/* Debug Info */}
+                    <div className="text-xs text-slate-500 mb-2">Debug: Loaded {TEMPLATE_QUESTIONS.length} sections. Selected: {selectedTemplateQuestions.size}</div>
+
+                    {TEMPLATE_QUESTIONS.map((section, sIdx) => (
+                      <div key={sIdx} className="border border-slate-200 rounded-lg overflow-hidden">
+                        <button
+                          onClick={() => setExpandedSections(prev => ({ ...prev, [sIdx]: !prev[sIdx] }))}
+                          className="w-full px-4 py-3 bg-slate-50 text-left font-medium text-slate-700 flex justify-between items-center hover:bg-slate-100"
+                        >
+                          {section.title}
+                          <ChevronRight className={`w-4 h-4 transition-transform ${expandedSections[sIdx] ? 'rotate-90' : ''}`} />
+                        </button>
+                        {expandedSections[sIdx] && (
+                          <div className="p-3 bg-white space-y-2 border-t border-slate-200">
+                            <button
+                              className="text-xs text-indigo-600 font-medium mb-2 hover:underline"
+                              onClick={() => {
+                                const newSet = new Set(selectedTemplateQuestions);
+                                const allSelected = section.questions.every(q => newSet.has(q.label));
+                                section.questions.forEach(q => allSelected ? newSet.delete(q.label) : newSet.add(q.label));
+                                setSelectedTemplateQuestions(newSet);
+                              }}
+                            >
+                              {section.questions.every(q => selectedTemplateQuestions.has(q.label)) ? 'Deselect Section' : 'Select Section'}
+                            </button>
+                            {section.questions.map((q, qIdx) => (
+                              <label key={qIdx} className="flex items-start space-x-3 p-2 hover:bg-slate-50 rounded cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  className="mt-1 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                                  checked={selectedTemplateQuestions.has(q.label)}
+                                  onChange={(e) => {
+                                    const newSet = new Set(selectedTemplateQuestions);
+                                    e.target.checked ? newSet.add(q.label) : newSet.delete(q.label);
+                                    setSelectedTemplateQuestions(newSet);
+                                  }}
+                                />
+                                <div className="text-sm">
+                                  <div className="font-medium text-slate-900">{q.label}</div>
+                                  <div className="text-xs text-slate-500 capitalize">{q.type} {q.options?.length > 0 && `(${q.options.length} options)`}</div>
+                                </div>
+                              </label>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="p-4 border-t border-slate-200 bg-slate-50">
+                    <button onClick={handleTemplateProcess} className="w-full py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700">
+                      Generate Survey ({selectedTemplateQuestions.size} selected)
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -1191,20 +1287,10 @@ ${senderName}`;
                           categories: surveyCategories
                         };
 
-                        const response = await fetch(`${SUPABASE_URL}/rest/v1/surveys`, {
-                          method: 'POST',
-                          headers: {
-                            'apikey': SUPABASE_ANON_KEY,
-                            'Authorization': `Bearer ${session.access_token}`,
-                            'Content-Type': 'application/json',
-                            'Prefer': 'return=minimal'
-                          },
-                          body: JSON.stringify(surveyData)
-                        });
+                        const { error } = await supabase.from('surveys').insert(surveyData);
 
-                        if (!response.ok) {
-                          const errorText = await response.text();
-                          throw new Error(`Insert failed: ${response.status} ${errorText}`);
+                        if (error) {
+                          throw new Error(`Insert failed: ${error.message}`);
                         }
                         const customer = customers.find(c => c.id === selectedCustomerId);
                         await publishToClipboard({ id: surveyId, survey_type: surveyType }, customer);
@@ -1324,22 +1410,33 @@ function SurveyResults({ surveyId, onBack }) {
     const response = responses[0];
     if (!response) return alert("No responses to export");
 
-    const rows = survey.fields.map((field, idx) => {
-      const answer = response.answers[idx] || {};
-      return {
-        Date: field.date,
-        Description: field.description,
-        Amount: field.amount,
-        Type: field.type,
-        Category: answer.category || '',
-        Notes: answer.notes || ''
-      };
-    });
-
-    const worksheet = XLSX.utils.json_to_sheet(rows);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Reconciliation");
-    XLSX.writeFile(workbook, `Reconciliation_${survey.title}.xlsx`);
+    if (survey.survey_type === 'general') {
+      const rows = survey.fields.map((field, idx) => ({
+        Section: field.section || '',
+        Question: field.label,
+        Answer: response.answers[idx] || ''
+      }));
+      const worksheet = XLSX.utils.json_to_sheet(rows);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Survey Responses");
+      XLSX.writeFile(workbook, `Survey_${survey.title}.xlsx`);
+    } else {
+      const rows = survey.fields.map((field, idx) => {
+        const answer = response.answers[idx] || {};
+        return {
+          Date: field.date,
+          Description: field.description,
+          Amount: field.amount,
+          Type: field.type,
+          Category: answer.category || '',
+          Notes: answer.notes || ''
+        };
+      });
+      const worksheet = XLSX.utils.json_to_sheet(rows);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Reconciliation");
+      XLSX.writeFile(workbook, `Reconciliation_${survey.title}.xlsx`);
+    }
   };
 
   const exportPDF = () => {
@@ -1348,26 +1445,41 @@ function SurveyResults({ surveyId, onBack }) {
     if (!response) return alert("No responses to export");
 
     const doc = new jsPDF();
-    doc.text(`Reconciliation Report: ${survey.title}`, 14, 20);
+    if (survey.survey_type === 'general') {
+      doc.text(`Survey Report: ${survey.title}`, 14, 20);
+      const tableData = survey.fields.map((field, idx) => [
+        field.section || '',
+        field.label,
+        response.answers[idx] || '-'
+      ]);
+      doc.autoTable({
+        head: [['Section', 'Question', 'Answer']],
+        body: tableData,
+        startY: 30,
+      });
+      doc.save(`Survey_${survey.title}.pdf`);
+    } else {
+      doc.text(`Reconciliation Report: ${survey.title}`, 14, 20);
 
-    const tableData = survey.fields.map((field, idx) => {
-      const answer = response.answers[idx] || {};
-      return [
-        field.date,
-        field.description,
-        typeof field.amount === 'number' ? field.amount.toFixed(2) : field.amount,
-        answer.category || '-',
-        answer.notes || '-'
-      ];
-    });
+      const tableData = survey.fields.map((field, idx) => {
+        const answer = response.answers[idx] || {};
+        return [
+          field.date,
+          field.description,
+          typeof field.amount === 'number' ? field.amount.toFixed(2) : field.amount,
+          answer.category || '-',
+          answer.notes || '-'
+        ];
+      });
 
-    doc.autoTable({
-      head: [['Date', 'Description', 'Amount', 'Category', 'Notes']],
-      body: tableData,
-      startY: 30,
-    });
+      doc.autoTable({
+        head: [['Date', 'Description', 'Amount', 'Category', 'Notes']],
+        body: tableData,
+        startY: 30,
+      });
 
-    doc.save(`Reconciliation_${survey.title}.pdf`);
+      doc.save(`Reconciliation_${survey.title}.pdf`);
+    }
   };
 
   if (loading) return <LoadingScreen />;
@@ -1397,36 +1509,59 @@ function SurveyResults({ surveyId, onBack }) {
 
         {/* Always show table, even if no responses */}
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm text-slate-600">
-            <thead className="bg-slate-100 text-slate-700 uppercase tracking-wider text-xs">
-              <tr>
-                <th className="px-6 py-3">Date</th>
-                <th className="px-6 py-3">Description</th>
-                <th className="px-6 py-3 text-right">Amount</th>
-                <th className="px-6 py-3">Category</th>
-                <th className="px-6 py-3">Notes</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {survey.fields.map((field, idx) => {
-                // Safely access answer from first response if it exists
-                const answer = (responses[0] && responses[0].answers && responses[0].answers[idx]) || {};
-                return (
+          {survey.survey_type === 'general' ? (
+            <table className="w-full text-left text-sm text-slate-600">
+              <thead className="bg-slate-100 text-slate-700 uppercase tracking-wider text-xs">
+                <tr>
+                  <th className="px-6 py-3 w-1/4">Section</th>
+                  <th className="px-6 py-3 w-1/3">Question</th>
+                  <th className="px-6 py-3">Answer</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {survey.fields.map((field, idx) => (
                   <tr key={idx} className="hover:bg-slate-50">
-                    <td className="px-6 py-3">{field.date}</td>
-                    <td className="px-6 py-3 text-slate-900 font-medium">{field.description}</td>
-                    <td className="px-6 py-3 text-right font-mono">{typeof field.amount === 'number' ? field.amount.toFixed(2) : field.amount}</td>
-                    <td className="px-6 py-3">
-                      <span className={`px-2 py-1 rounded-md text-xs ${answer.category ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-400'}`}>
-                        {answer.category || 'Pending'}
-                      </span>
+                    <td className="px-6 py-3 font-medium text-slate-500">{field.section || '-'}</td>
+                    <td className="px-6 py-3 text-slate-900">{field.label}</td>
+                    <td className="px-6 py-3 font-medium text-indigo-700">
+                      {responses[0]?.answers[idx] || <span className="text-slate-400 italic">No response</span>}
                     </td>
-                    <td className="px-6 py-3 text-slate-500 italic">{answer.notes || '-'}</td>
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <table className="w-full text-left text-sm text-slate-600">
+              <thead className="bg-slate-100 text-slate-700 uppercase tracking-wider text-xs">
+                <tr>
+                  <th className="px-6 py-3">Date</th>
+                  <th className="px-6 py-3">Description</th>
+                  <th className="px-6 py-3 text-right">Amount</th>
+                  <th className="px-6 py-3">Category</th>
+                  <th className="px-6 py-3">Notes</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {survey.fields.map((field, idx) => {
+                  // Safely access answer from first response if it exists
+                  const answer = (responses[0] && responses[0].answers && responses[0].answers[idx]) || {};
+                  return (
+                    <tr key={idx} className="hover:bg-slate-50">
+                      <td className="px-6 py-3">{field.date}</td>
+                      <td className="px-6 py-3 text-slate-900 font-medium">{field.description}</td>
+                      <td className="px-6 py-3 text-right font-mono">{typeof field.amount === 'number' ? field.amount.toFixed(2) : field.amount}</td>
+                      <td className="px-6 py-3">
+                        <span className={`px-2 py-1 rounded-md text-xs ${answer.category ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-400'}`}>
+                          {answer.category || 'Pending'}
+                        </span>
+                      </td>
+                      <td className="px-6 py-3 text-slate-500 italic">{answer.notes || '-'}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
           {responses.length === 0 && (
             <div className="p-4 bg-slate-50 text-center text-slate-500 italic text-xs border-t border-slate-100">
               No responses received yet. Showing template view.
@@ -1893,6 +2028,9 @@ function SuperuserDashboard({ session, view, setView, currentSurveyId, setCurren
   const [isProcessing, setIsProcessing] = useState(false);
   const [surveyCategories, setSurveyCategories] = useState(['Personal Expense', 'Loan', 'Business Expense', 'Account Transfer']);
   const [newCategoryInput, setNewCategoryInput] = useState('');
+  const [selectedTemplateQuestions, setSelectedTemplateQuestions] = useState(new Set());
+  const [expandedSections, setExpandedSections] = useState({});
+  const [showTemplateSelector, setShowTemplateSelector] = useState(false);
   const fileInputRef = useRef(null);
 
   useEffect(() => {
@@ -2121,10 +2259,29 @@ function SuperuserDashboard({ session, view, setView, currentSurveyId, setCurren
     }
   };
 
+  const suHandleTemplateProcess = () => {
+    const selected = Array.from(selectedTemplateQuestions);
+    if (selected.length === 0) { alert("Please select at least one question from the template."); return; }
+
+    let fields = [];
+    TEMPLATE_QUESTIONS.forEach(section => {
+      section.questions.forEach(q => {
+        if (selected.includes(q.label)) {
+          // Strip original numbering
+          const cleanLabel = q.label.replace(/^\d+\.\s*/, '');
+          fields.push({ ...q, label: cleanLabel, section: section.title });
+        }
+      });
+    });
+
+    setExtractedData({ fields });
+    setView('su-preview-data');
+  };
+
   const suPublishToClipboard = async (survey, customer) => {
     const name = customer?.first_name || 'Client';
     const email = customer?.email || '';
-    const surveyUrl = `https://recon-portal-pied.vercel.app/?survey_id=${survey.id}`;
+    const surveyUrl = `${window.location.origin}/?survey_id=${survey.id}`;
     const subject = `Action Required: Transaction Classification Questions`;
     const senderName = userDisplayName || 'Five Star Tax Team';
 
@@ -2159,6 +2316,56 @@ ${senderName}`;
     window.open(mailtoUrl, '_blank');
   };
 
+  const suPublishToClipboardForAdmin = async (survey, customer, adminEmail) => {
+    const surveyUrl = `${window.location.origin}/?survey_id=${survey.id}`;
+    const subject = `Action Required: Please forward survey to customer`;
+
+    const customerName = customer ? `${customer.first_name || ''} ${customer.last_name || ''}`.trim() || 'Client' : 'Client';
+    const customerEmail = customer?.email || 'N/A';
+    const caseNumber = customer?.case_number || 'N/A';
+
+    const textContent = `Hello,
+
+Please forward the following Client Questionnaire to the customer to fill out.
+
+Customer Details:
+Name: ${customerName}
+Case #: ${caseNumber}
+Email: ${customerEmail}
+
+Survey Link: ${surveyUrl}
+
+Thank you.`;
+
+    // Try clipboard first
+    try {
+      const htmlContent = `<div style="font-family: Arial, sans-serif; color: #333;"><p>Hello,</p><p>Please forward the following Client Questionnaire to the customer to fill out.</p>
+<div style="background-color: #f3f4f6; padding: 15px; border-radius: 5px; margin: 15px 0;">
+  <strong>Customer Details:</strong><br/>
+  Name: ${customerName}<br/>
+  Case #: ${caseNumber}<br/>
+  Email: ${customerEmail}
+</div>
+<p style="margin: 20px 0;"><a href="${surveyUrl}" style="background-color: #4b5563; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; font-weight: bold;">Open Survey</a></p><p style="font-size: 13px; color: #666; margin-top: 20px;">Link: ${surveyUrl}</p><p>Thank you.</p></div>`;
+      const blobHtml = new Blob([htmlContent], { type: 'text/html' });
+      const blobText = new Blob([textContent], { type: 'text/plain' });
+      await navigator.clipboard.write([new ClipboardItem({ 'text/html': blobHtml, 'text/plain': blobText })]);
+
+      const owaLink = `https://outlook.office.com/mail/deeplink/compose?to=${encodeURIComponent(adminEmail)}&subject=${encodeURIComponent(subject)}`;
+      if (confirm('Email content copied to clipboard!\n\n1. Outlook Web will open for you.\n2. Click inside the message body.\n3. Press Ctrl+V to paste.\n\nOpen Outlook now?')) {
+        window.open(owaLink, '_blank');
+      }
+      return;
+    } catch (err) {
+      console.warn('Clipboard write failed, using mailto fallback:', err);
+    }
+
+    // Fallback: open mailto link directly
+    const mailtoUrl = `mailto:${encodeURIComponent(adminEmail)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(textContent)}`;
+    alert(`Opening email draft...\n\nPlease check your email app and click SEND to ask the admin.`);
+    window.open(mailtoUrl, '_blank');
+  };
+
   if (view === 'admin-results' && currentSurveyId) {
     return <SurveyResults surveyId={currentSurveyId} onBack={() => { setView('dashboard'); setActiveTab('customers'); }} />;
   }
@@ -2190,7 +2397,7 @@ ${senderName}`;
               </button>
               <button onClick={() => setSurveyType('general')}
                 className={`p-4 rounded-xl border-2 text-left transition-all ${surveyType === 'general' ? 'border-purple-600 bg-purple-50' : 'border-slate-200 hover:border-purple-300'}`}>
-                <div className="font-bold text-slate-900">General Survey</div>
+                <div className="font-bold text-slate-900">Business Profile</div>
                 <div className="text-sm text-slate-500">Forms, questionnaires, data collection</div>
               </button>
             </div>
@@ -2198,8 +2405,26 @@ ${senderName}`;
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-2">3. Choose Data Source</label>
             <div className="flex space-x-2 mb-4">
-              {['upload', 'paste'].map(t => (
-                <button key={t} onClick={() => setInputType(t)}
+              {['upload', 'paste', ...(surveyType === 'general' ? ['template'] : [])].map(t => (
+                <button key={t} onClick={() => {
+                  if (t === 'template') {
+                    if (inputType === 'template') {
+                      // Already on template, just re-open selector (don't clear)
+                      setShowTemplateSelector(true);
+                    } else {
+                      // Switching to template, clear and open
+                      setInputType(t);
+                      setExtractedData(null);
+                      setPasteContent('');
+                      setSelectedTemplateQuestions(new Set());
+                      setShowTemplateSelector(true);
+                    }
+                  } else {
+                    setInputType(t);
+                    setExtractedData(null);
+                    setPasteContent('');
+                  }
+                }}
                   className={`px-4 py-2 rounded-lg text-sm font-medium capitalize transition-colors ${inputType === t ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
                   {t}
                 </button>
@@ -2226,6 +2451,47 @@ ${senderName}`;
                   className="w-full py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 disabled:opacity-50">Process Text</button>
               </div>
             )}
+
+            {inputType === 'template' && (
+              <div className="border border-slate-200 rounded-xl overflow-hidden bg-white p-8 text-center space-y-4">
+                <div className="w-16 h-16 bg-indigo-50 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <FileText className="w-8 h-8 text-indigo-600" />
+                </div>
+                <h3 className="text-xl font-bold text-slate-900">
+                  {selectedTemplateQuestions.size > 0
+                    ? `${selectedTemplateQuestions.size} Questions Selected`
+                    : 'No Questions Selected'}
+                </h3>
+                <p className="text-slate-500 max-w-md mx-auto">
+                  {selectedTemplateQuestions.size > 0
+                    ? "Ready to generate your survey? Click 'Generate' below to preview."
+                    : "Please open the template selector to choose questions for this Business Profile."}
+                </p>
+
+                <div className="flex justify-center space-x-4 pt-4">
+                  {selectedTemplateQuestions.size > 0 ? (
+                    <>
+                      <button
+                        onClick={() => setShowTemplateSelector(true)}
+                        className="px-6 py-3 rounded-xl font-semibold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 transition-colors border border-indigo-200"
+                      >
+                        Modify Selection
+                      </button>
+                      <button
+                        onClick={suHandleTemplateProcess}
+                        className="px-6 py-3 rounded-xl font-bold text-white bg-indigo-600 hover:bg-indigo-700 shadow-lg hover:shadow-indigo-200 transition-all"
+                      >
+                        Generate Survey
+                      </button>
+                    </>
+                  ) : (
+                    <div className="text-sm font-medium text-slate-500 bg-slate-100 px-4 py-2 rounded-lg">
+                      Tip: Click "Template" button above to select questions.
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
           {surveyType === 'reconciliation' && (
             <div className="mt-6 border-t border-slate-100 pt-6">
@@ -2250,12 +2516,24 @@ ${senderName}`;
             </div>
           )}
         </div>
-        {isProcessing && (
-          <div className="flex items-center justify-center p-4 text-indigo-600">
-            <Loader2 className="w-5 h-5 animate-spin mr-2" /> Processing data...
-          </div>
+        {
+          isProcessing && (
+            <div className="flex items-center justify-center p-4 text-indigo-600">
+              <Loader2 className="w-5 h-5 animate-spin mr-2" /> Processing data...
+            </div>
+          )
+        }
+        {showTemplateSelector && (
+          <TemplateSelector
+            initialSelection={selectedTemplateQuestions}
+            onClose={() => setShowTemplateSelector(false)}
+            onConfirm={(newSelection) => {
+              setSelectedTemplateQuestions(newSelection);
+              setShowTemplateSelector(false);
+            }}
+          />
         )}
-      </div>
+      </div >
     );
   }
 
@@ -2275,6 +2553,53 @@ ${senderName}`;
             </div>
             <div className="flex space-x-2">
               <button onClick={() => setView('su-create-survey')} className="px-3 py-1.5 text-slate-600 text-sm font-medium hover:bg-slate-200 rounded-lg">Discard</button>
+
+              <div className="flex items-center space-x-2 border-l border-slate-300 pl-2">
+                <select id="su-admin-select-preview" className="p-1.5 border border-slate-300 rounded text-sm outline-none bg-white">
+                  <option value="">Select Admin...</option>
+                  {admins.map(a => <option key={a.id} value={a.email}>{a.display_name || a.email}</option>)}
+                </select>
+                <button
+                  disabled={isProcessing}
+                  onClick={async () => {
+                    const adminEmail = document.getElementById('su-admin-select-preview')?.value;
+                    if (!adminEmail) { alert('Please select an administrator first!'); return; }
+                    if (!extractedData) { alert('No data to publish'); return; }
+                    if (!selectedCustomerId) { alert('Please select a customer first!'); return; }
+                    setIsProcessing(true);
+                    try {
+                      const surveyId = crypto.randomUUID();
+                      const surveyData = {
+                        id: surveyId,
+                        title: surveyTitle || `${surveyType === 'reconciliation' ? 'Recon' : 'Survey'} - ${new Date().toLocaleDateString()}`,
+                        status: 'published',
+                        survey_type: surveyType,
+                        customer_id: selectedCustomerId,
+                        fields: extractedData.transactions || extractedData.fields,
+                        raw_data: extractedData,
+                        categories: surveyCategories
+                      };
+                      if (!session?.access_token) throw new Error('No active session.');
+                      const { error } = await supabase.from('surveys').insert(surveyData);
+                      if (error) throw new Error(`Insert failed: ${error.message}`);
+                      const customer = customers.find(c => c.id === selectedCustomerId);
+                      await suPublishToClipboardForAdmin({ id: surveyId, survey_type: surveyType }, customer, adminEmail);
+                      alert('Survey published! Don\'t forget to send the email to the admin.');
+                      setView('dashboard');
+                      fetchAllSurveys();
+                    } catch (e) {
+                      console.error('Publish error:', e);
+                      alert('Error: ' + e.message);
+                    } finally {
+                      setIsProcessing(false);
+                    }
+                  }}
+                  className={`px-3 py-1.5 text-white text-sm font-medium rounded-lg flex items-center shadow-sm ${isProcessing ? 'bg-slate-400 cursor-not-allowed' : 'bg-slate-600 hover:bg-slate-700'}`}>
+                  {isProcessing ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Save className="w-4 h-4 mr-1.5" />}
+                  {isProcessing ? 'Publishing...' : 'Publish & Send to Admin'}
+                </button>
+              </div>
+
               <button
                 disabled={isProcessing}
                 onClick={async () => {
@@ -2299,21 +2624,11 @@ ${senderName}`;
                       throw new Error('No active session. Please sign in again.');
                     }
 
-                    const response = await fetch(`${SUPABASE_URL}/rest/v1/surveys`, {
-                      method: 'POST',
-                      headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${session.access_token}`,
-                        'Content-Type': 'application/json',
-                        'Prefer': 'return=minimal'
-                      },
-                      body: JSON.stringify(surveyData)
-                    });
+                    const { error } = await supabase.from('surveys').insert(surveyData);
 
-                    if (!response.ok) {
-                      const errorText = await response.text();
-                      console.error('Fetch error:', response.status, errorText);
-                      throw new Error(`Insert failed: ${response.status} ${response.statusText}`);
+                    if (error) {
+                      console.error('Insert error:', error);
+                      throw new Error(`Insert failed: ${error.message}`);
                     }
 
                     const customer = customers.find(c => c.id === selectedCustomerId);
@@ -2330,7 +2645,7 @@ ${senderName}`;
                 }}
                 className={`px-3 py-1.5 text-white text-sm font-medium rounded-lg flex items-center shadow-sm ${isProcessing ? 'bg-slate-400 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700'}`}>
                 {isProcessing ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Save className="w-4 h-4 mr-1.5" />}
-                {isProcessing ? 'Publishing...' : 'Publish & Send Email'}
+                {isProcessing ? 'Publishing...' : 'Publish & Send to Customer'}
               </button>
             </div>
           </div>
@@ -2371,13 +2686,108 @@ ${senderName}`;
               </table>
             </div>
           ) : (
-            <div className="p-6 grid gap-4">
-              {(extractedData.fields || []).map((f, i) => (
-                <div key={i} className="p-4 border border-slate-200 rounded-lg flex justify-between items-center">
-                  <span className="font-medium text-slate-900">{f.label}</span>
-                  <span className="px-2 py-1 bg-purple-100 text-purple-700 text-xs rounded uppercase">{f.type}</span>
+            <div className="space-y-6 bg-slate-50 p-6 rounded-xl border border-slate-200">
+              <div className="flex items-center space-x-2 text-sm text-slate-500 mb-4 bg-yellow-50 p-3 rounded-lg border border-yellow-100">
+                <AlertCircle className="w-4 h-4 text-yellow-600" />
+                <span>This is how the survey will look to your client.</span>
+              </div>
+
+              {(() => {
+                const groupedFields = [];
+                let currentSection = null;
+                (extractedData.fields || []).forEach((f, i) => {
+                  if (f.section !== currentSection) {
+                    currentSection = f.section;
+                    groupedFields.push({ section: currentSection, fields: [] });
+                  }
+                  groupedFields[groupedFields.length - 1].fields.push({ ...f, index: i });
+                });
+
+                let questionCounter = 0;
+                return groupedFields.map((group, groupIdx) => (
+                  <fieldset key={groupIdx} className="border border-[#d1d5db] rounded-lg p-8 mb-10 bg-[#fdfdfd] relative group">
+                    {group.section && (
+                      <legend className="text-[1.75rem] font-semibold text-[#005A9C] px-4 ml-4">
+                        {group.section}
+                      </legend>
+                    )}
+                    <div className="space-y-7">
+                      {group.fields.map(f => {
+                        questionCounter++;
+                        const i = f.index;
+                        const fType = f.type ? f.type.toLowerCase() : 'text';
+                        return (
+                          <div key={i} className="mb-7 relative group/item">
+                            {/* Delete button for quick editing in preview */}
+                            <button
+                              onClick={() => {
+                                const newFields = [...extractedData.fields];
+                                newFields.splice(i, 1);
+                                setExtractedData({ ...extractedData, fields: newFields });
+                              }}
+                              className="absolute -top-3 -right-3 text-slate-300 hover:text-red-500 opacity-0 group-hover/item:opacity-100 transition-all p-1.5 bg-white rounded-full shadow border z-10"
+                              title="Remove Question"
+                            >
+                              <Trash className="w-4 h-4" />
+                            </button>
+
+                            <label className="block font-semibold text-[#111827] mb-2 text-base">
+                              {questionCounter}. {f.label}
+                            </label>
+
+                            {fType === 'textarea' ? (
+                              <textarea
+                                className="w-full p-3.5 border border-[#d1d5db] rounded-md text-base font-sans focus:border-[#007bff] focus:shadow-[0_0_0_3px_rgba(0,123,255,0.25)] outline-none min-h-[120px] resize-y transition-all bg-white"
+                                placeholder="Type your answer here..."
+                              />
+                            ) : fType === 'select' ? (
+                              <select
+                                className="w-full p-3.5 border border-[#d1d5db] rounded-md text-base font-sans focus:border-[#007bff] focus:shadow-[0_0_0_3px_rgba(0,123,255,0.25)] outline-none bg-white transition-all"
+                                defaultValue=""
+                              >
+                                <option value="" disabled>Select an option...</option>
+                                {(f.options || []).map((opt, idx) => (
+                                  <option key={idx} value={opt}>{opt}</option>
+                                ))}
+                              </select>
+                            ) : fType === 'radio' ? (
+                              <div className="flex flex-wrap gap-4 pt-2">
+                                {(f.options || ['Yes', 'No']).map((opt, idx) => (
+                                  <div key={idx} className="flex items-center gap-2">
+                                    <input type="radio" name={`preview_radio_${i}`} id={`preview_radio_${i}_${idx}`} className="w-5 h-5 cursor-pointer accent-[#005A9C]" />
+                                    <label htmlFor={`preview_radio_${i}_${idx}`} className="text-[#111827] cursor-pointer">{opt}</label>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : fType === 'checkbox' ? (
+                              <div className="flex flex-wrap gap-4 pt-2">
+                                {(f.options || []).map((opt, idx) => (
+                                  <div key={idx} className="flex items-center gap-2">
+                                    <input type="checkbox" id={`preview_checkbox_${i}_${idx}`} className="w-5 h-5 cursor-pointer accent-[#005A9C]" />
+                                    <label htmlFor={`preview_checkbox_${i}_${idx}`} className="text-[#111827] cursor-pointer">{opt}</label>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <input
+                                type={fType === 'date' ? 'date' : fType === 'number' ? 'number' : fType === 'email' ? 'email' : 'text'}
+                                className="w-full p-3.5 border border-[#d1d5db] rounded-md text-base font-sans focus:border-[#007bff] focus:shadow-[0_0_0_3px_rgba(0,123,255,0.25)] outline-none transition-all bg-white"
+                                placeholder={fType === 'date' ? '' : "Type your answer here..."}
+                              />
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </fieldset>
+                ));
+              })()}
+
+              {(!extractedData.fields || extractedData.fields.length === 0) && (
+                <div className="text-center py-12 text-slate-400">
+                  No questions in this survey.
                 </div>
-              ))}
+              )}
             </div>
           )}
         </div>
@@ -2704,6 +3114,8 @@ ${senderName}`;
           </div>
         </div>
       )}
+
+
     </div>
   );
 }
@@ -2747,6 +3159,8 @@ function SurveyRespondentView({ surveyId, survey: initialSurvey, onBack }) {
     const initialAnswers = {};
     if (data.survey_type === 'reconciliation' && Array.isArray(data.fields)) {
       data.fields.forEach((_, idx) => initialAnswers[idx] = { category: '', notes: '' });
+    } else if (Array.isArray(data.fields)) {
+      data.fields.forEach((_, idx) => initialAnswers[idx] = '');
     }
     setAnswers(initialAnswers);
   };
@@ -2789,23 +3203,23 @@ function SurveyRespondentView({ surveyId, survey: initialSurvey, onBack }) {
   if (!survey) return <div>Invalid Survey Link</div>;
 
   return (
-    <div className="max-w-3xl mx-auto py-12 px-4">
-      <div className="bg-white rounded-2xl shadow-xl overflow-hidden border border-slate-200">
-        <div className="bg-indigo-600 px-8 py-6 text-white">
+    <div className="max-w-[800px] mx-auto py-6 px-5 sm:px-10">
+      <div className="bg-white rounded-lg shadow-[0_2px_8px_rgba(0,0,0,0.1)] overflow-hidden pb-10 border border-slate-200">
+        <div className="text-center mb-10 pb-6 border-b-2 border-[#005A9C] px-8 pt-10 mx-5 mt-5">
           {onBack && (
-            <button onClick={onBack} className="text-indigo-200 hover:text-white text-sm mb-4 flex items-center transition-colors">
+            <button onClick={onBack} className="text-[#005A9C] hover:text-[#004a80] text-sm mb-4 flex items-center transition-colors">
               <ChevronRight className="w-4 h-4 rotate-180 mr-1" /> Back
             </button>
           )}
-          <h1 className="text-2xl font-bold">{survey.title}</h1>
-          <p className="opacity-80 text-sm mt-1">Please review and complete the items below.</p>
+          <h1 className="text-[#005A9C] text-[28px] font-bold mb-5">{survey.title}</h1>
+          <p className="text-[1.1rem] text-[#4b5563] max-w-[80%] mx-auto">Please review and complete the items below.</p>
         </div>
 
-        <div className="p-8 space-y-8">
+        <div className="px-5 sm:px-10">
           {survey.survey_type === 'reconciliation' ? (
-            <div className="space-y-6">
+            <div className="space-y-6 mb-10">
               {(survey.fields || []).map((tx, idx) => (
-                <div key={idx} className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 hover:border-indigo-200 transition-colors">
+                <div key={idx} className="p-4 rounded-xl border border-slate-300 bg-slate-50/50 hover:border-[#005A9C] transition-colors">
                   <div className="flex justify-between items-start mb-3">
                     <div>
                       <p className="font-semibold text-slate-900">{tx.description}</p>
@@ -2819,7 +3233,7 @@ function SurveyRespondentView({ surveyId, survey: initialSurvey, onBack }) {
                     <div>
                       <label className="block text-xs font-medium text-slate-500 mb-1">Category</label>
                       <select
-                        className="w-full p-2 rounded-lg border border-slate-200 text-sm bg-white"
+                        className="w-full p-2.5 rounded-lg border border-slate-300 text-sm bg-white focus:border-[#007bff] outline-none"
                         value={answers[idx]?.category || ''}
                         onChange={(e) => setAnswers({ ...answers, [idx]: { ...answers[idx], category: e.target.value } })}
                       >
@@ -2833,7 +3247,7 @@ function SurveyRespondentView({ surveyId, survey: initialSurvey, onBack }) {
                       <label className="block text-xs font-medium text-slate-500 mb-1">Notes</label>
                       <input
                         type="text"
-                        className="w-full p-2 rounded-lg border border-slate-200 text-sm"
+                        className="w-full p-2.5 rounded-lg border border-slate-300 text-sm focus:border-[#007bff] outline-none"
                         placeholder="Add details..."
                         value={answers[idx]?.notes || ''}
                         onChange={(e) => setAnswers({ ...answers, [idx]: { ...answers[idx], notes: e.target.value } })}
@@ -2844,23 +3258,275 @@ function SurveyRespondentView({ surveyId, survey: initialSurvey, onBack }) {
               ))}
             </div>
           ) : (
-            <div className="space-y-6">
-              {(survey.fields || []).map((f, i) => (
-                <div key={i}>
-                  <label className="block text-sm font-medium text-slate-900 mb-2">{f.label}</label>
-                  {f.type === 'text' && <input type="text" className="w-full p-3 rounded-xl border border-slate-200" />}
-                  {/* Add other types as needed */}
-                </div>
-              ))}
+            <div className="w-full">
+              {(() => {
+                const groupedFields = [];
+                let currentSection = null;
+                (survey.fields || []).forEach((f, i) => {
+                  if (f.section !== currentSection) {
+                    currentSection = f.section;
+                    groupedFields.push({ section: currentSection, fields: [] });
+                  }
+                  groupedFields[groupedFields.length - 1].fields.push({ ...f, index: i });
+                });
+
+                let questionCounter = 0;
+                return groupedFields.map((group, groupIdx) => (
+                  <fieldset key={groupIdx} className="border border-[#d1d5db] rounded-lg p-8 mb-10 bg-[#fdfdfd]">
+                    {group.section && (
+                      <legend className="text-[1.75rem] font-semibold text-[#005A9C] px-4 ml-4">
+                        {group.section}
+                      </legend>
+                    )}
+                    <div className="space-y-7">
+                      {group.fields.map(f => {
+                        questionCounter++;
+                        const i = f.index;
+                        const fType = f.type ? f.type.toLowerCase() : 'text';
+                        return (
+                          <div key={i} className="mb-7">
+                            <label className="block font-semibold text-[#111827] mb-2 text-base">
+                              {questionCounter}. {f.label}
+                            </label>
+                            {fType === 'textarea' ? (
+                              <textarea
+                                className="w-full p-3.5 border border-[#d1d5db] rounded-md text-base font-sans focus:border-[#007bff] focus:shadow-[0_0_0_3px_rgba(0,123,255,0.25)] outline-none min-h-[120px] resize-y transition-all"
+                                placeholder="Type your answer here..."
+                                value={answers[i] || ''}
+                                onChange={(e) => setAnswers({ ...answers, [i]: e.target.value })}
+                              />
+                            ) : fType === 'select' ? (
+                              <select
+                                className="w-full p-3.5 border border-[#d1d5db] rounded-md text-base font-sans focus:border-[#007bff] focus:shadow-[0_0_0_3px_rgba(0,123,255,0.25)] outline-none bg-white transition-all"
+                                value={answers[i] || ''}
+                                onChange={(e) => setAnswers({ ...answers, [i]: e.target.value })}
+                              >
+                                <option value="" disabled>Select an option...</option>
+                                {(f.options || []).map((opt, idx) => (
+                                  <option key={idx} value={opt}>{opt}</option>
+                                ))}
+                              </select>
+                            ) : fType === 'radio' ? (
+                              <div className="flex flex-wrap gap-4 pt-2">
+                                {(f.options || ['Yes', 'No']).map((opt, idx) => (
+                                  <div key={idx} className="flex items-center gap-2">
+                                    <input
+                                      type="radio"
+                                      name={`question_${i}`}
+                                      id={`question_${i}_${idx}`}
+                                      className="w-5 h-5 cursor-pointer accent-[#005A9C]"
+                                      checked={answers[i] === opt}
+                                      onChange={() => setAnswers({ ...answers, [i]: opt })}
+                                    />
+                                    <label htmlFor={`question_${i}_${idx}`} className="cursor-pointer">{opt}</label>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : fType === 'checkbox' ? (
+                              <div className="flex flex-wrap gap-4 pt-2">
+                                {(f.options || []).map((opt, idx) => {
+                                  let ansArray = [];
+                                  if (Array.isArray(answers[i])) ansArray = answers[i];
+                                  else if (typeof answers[i] === 'string' && answers[i]) ansArray = answers[i].split(', ');
+
+                                  return (
+                                    <div key={idx} className="flex items-center gap-2">
+                                      <input
+                                        type="checkbox"
+                                        id={`question_${i}_${idx}`}
+                                        className="w-5 h-5 cursor-pointer accent-[#005A9C]"
+                                        checked={ansArray.includes(opt)}
+                                        onChange={(e) => {
+                                          let newArray = [...ansArray];
+                                          if (e.target.checked) newArray.push(opt);
+                                          else newArray = newArray.filter(v => v !== opt);
+                                          setAnswers({ ...answers, [i]: newArray });
+                                        }}
+                                      />
+                                      <label htmlFor={`question_${i}_${idx}`} className="cursor-pointer">{opt}</label>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            ) : (
+                              <input
+                                type={fType === 'date' ? 'date' : fType === 'number' ? 'number' : fType === 'email' ? 'email' : 'text'}
+                                className="w-full p-3.5 border border-[#d1d5db] rounded-md text-base font-sans focus:border-[#007bff] focus:shadow-[0_0_0_3px_rgba(0,123,255,0.25)] outline-none transition-all bg-white"
+                                placeholder={fType === 'date' ? '' : "Type your answer here..."}
+                                value={answers[i] || ''}
+                                onChange={(e) => setAnswers({ ...answers, [i]: e.target.value })}
+                              />
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </fieldset>
+                ));
+              })()}
             </div>
           )}
 
           <button
             onClick={handleSubmit}
-            className="w-full py-4 bg-indigo-600 text-white rounded-xl font-bold text-lg hover:bg-indigo-700 shadow-lg hover:shadow-xl transition-all"
+            className="block w-full p-4 mt-4 text-[1.25rem] font-semibold text-white bg-[#005A9C] rounded-lg cursor-pointer hover:bg-[#004a80] active:translate-y-[1px] transition-all border-none"
           >
             Submit Response
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Template Selector Modal Component
+ */
+function TemplateSelector({ onClose, onConfirm, initialSelection }) {
+  const [selected, setSelected] = useState(new Set(initialSelection));
+  const [activeSection, setActiveSection] = useState(0);
+
+  const toggleQuestion = (label) => {
+    const newSet = new Set(selected);
+    if (newSet.has(label)) {
+      newSet.delete(label);
+    } else {
+      newSet.add(label);
+    }
+    setSelected(newSet);
+  };
+
+  const toggleSection = (sectionIndex) => {
+    const section = TEMPLATE_QUESTIONS[sectionIndex];
+    const newSet = new Set(selected);
+    const allSelected = section.questions.every(q => newSet.has(q.label));
+
+    if (allSelected) {
+      section.questions.forEach(q => newSet.delete(q.label));
+    } else {
+      section.questions.forEach(q => newSet.add(q.label));
+    }
+    setSelected(newSet);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[80vh] flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200">
+        {/* Header */}
+        <div className="p-6 border-b border-slate-200 flex justify-between items-center bg-slate-50">
+          <div>
+            <h2 className="text-xl font-bold text-slate-900">Select Template Questions</h2>
+            <p className="text-sm text-slate-500">Choose questions to include in your Business Profile survey.</p>
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-slate-200 rounded-full transition-colors">
+            <X className="w-6 h-6 text-slate-500" />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 flex overflow-hidden">
+          {/* Sidebar - Sections */}
+          <div className="w-64 bg-slate-50 border-r border-slate-200 overflow-y-auto p-4 space-y-2">
+            {TEMPLATE_QUESTIONS.map((section, idx) => {
+              const count = section.questions.filter(q => selected.has(q.label)).length;
+              return (
+                <button
+                  key={idx}
+                  onClick={() => setActiveSection(idx)}
+                  className={`w-full text-left px-4 py-3 rounded-xl transition-all flex justify-between items-center ${activeSection === idx
+                    ? 'bg-white shadow-sm ring-1 ring-slate-200 text-indigo-700 font-semibold'
+                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                    }`}
+                >
+                  <span className="truncate">{section.title}</span>
+                  {count > 0 && (
+                    <span className="bg-indigo-100 text-indigo-700 text-xs font-bold px-2 py-0.5 rounded-full">
+                      {count}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Main Content - Questions */}
+          <div className="flex-1 overflow-y-auto p-8 bg-white">
+            <div className="max-w-3xl mx-auto space-y-6">
+              <div className="flex justify-between items-end border-b border-slate-100 pb-4 mb-6">
+                <div>
+                  <h3 className="text-2xl font-bold text-slate-900">{TEMPLATE_QUESTIONS[activeSection].title}</h3>
+                  <p className="text-slate-500 mt-1">Select the questions relevant to this client.</p>
+                </div>
+                <button
+                  onClick={() => toggleSection(activeSection)}
+                  className="text-sm font-medium text-indigo-600 hover:text-indigo-700 hover:underline"
+                >
+                  {TEMPLATE_QUESTIONS[activeSection].questions.every(q => selected.has(q.label))
+                    ? 'Deselect All'
+                    : 'Select All'}
+                </button>
+              </div>
+
+              <div className="grid gap-4">
+                {TEMPLATE_QUESTIONS[activeSection].questions.map((q, qIdx) => {
+                  const isSelected = selected.has(q.label);
+                  return (
+                    <div
+                      key={qIdx}
+                      onClick={() => toggleQuestion(q.label)}
+                      className={`p-4 rounded-xl border-2 cursor-pointer transition-all ${isSelected
+                        ? 'border-indigo-600 bg-indigo-50/50'
+                        : 'border-slate-100 hover:border-indigo-200 hover:bg-slate-50'
+                        }`}
+                    >
+                      <div className="flex items-start space-x-3">
+                        <div className={`mt-0.5 w-5 h-5 rounded border flex items-center justify-center transition-colors ${isSelected
+                          ? 'bg-indigo-600 border-indigo-600'
+                          : 'border-slate-300 bg-white'
+                          }`}>
+                          {isSelected && <CheckCircle className="w-3.5 h-3.5 text-white" />}
+                        </div>
+                        <div className="flex-1">
+                          <p className={`font-medium text-base ${isSelected ? 'text-indigo-900' : 'text-slate-900'}`}>{q.label}</p>
+                          <div className="flex space-x-2 mt-1">
+                            <span className="text-xs px-2 py-0.5 bg-slate-100 text-slate-500 rounded uppercase font-semibold">
+                              {q.type}
+                            </span>
+                            {q.options && q.options.length > 0 && (
+                              <span className="text-xs px-2 py-0.5 bg-slate-100 text-slate-500 rounded">
+                                {q.options.length} options
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="p-6 border-t border-slate-200 bg-white flex justify-between items-center">
+          <div className="text-slate-600 font-medium">
+            <span className="text-indigo-600 font-bold text-lg">{selected.size}</span> questions selected total
+          </div>
+          <div className="flex space-x-3">
+            <button
+              onClick={onClose}
+              className="px-6 py-3 rounded-xl font-semibold text-slate-600 hover:bg-slate-100 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => onConfirm(selected)}
+              className="px-8 py-3 rounded-xl font-bold text-white bg-indigo-600 hover:bg-indigo-700 shadow-lg hover:shadow-indigo-200 transition-all active:scale-[0.98]"
+            >
+              Confirm Selection
+            </button>
+          </div>
         </div>
       </div>
     </div>
